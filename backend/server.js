@@ -6,29 +6,40 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const path = require("path");
 
-app.use(cors());
-//------------------------------------------- Deployment ----------------------------
+dotenv.config();
+
+const server = http.createServer(app);
+const allowedOrigins = [
+  "https://live-polling-app-omega.vercel.app",
+  "http://localhost:5173"
+];
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+}));
+
 const __dirname1 = path.resolve(__dirname, "dist");
 if (process.env.NODE_ENV === "production") {
+  app.use(express.static(__dirname1));
   app.get("*", (req, res) => {
-    app.use(express.static(__dirname1));
-    const indexfile = path.join(__dirname, "dist", "index.html");
+    const indexfile = path.join(__dirname1, "index.html");
     return res.sendFile(indexfile);
   });
 }
-
-//------------------------------------------- Deployment ----------------------------
-
-const server = http.createServer(app);
-
 const io = new Server(server, {
   cors: {
-    origin: "live-polling-app-omega.vercel.app",
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
-server.listen(3001, () => {
+server.listen(process.env.PORT || 3001, () => {
   console.log("server is running");
 });
 
@@ -43,7 +54,7 @@ io.on("connection", (socket) => {
       optionsFrequency: {},
       answered: false,
       results: {},
-      timer: questionData.timer, // Add timer to the question object
+      timer: questionData.timer,
     };
 
     question.options.forEach((option) => {
@@ -63,31 +74,28 @@ io.on("connection", (socket) => {
         Object.keys(currentQuestion.optionsFrequency).forEach((option) => {
           const percentage =
             (currentQuestion.optionsFrequency[option] / totalResponses) * 100;
-          currentQuestion.results[option] = percentage;
+          currentQuestion.results[option] = percentage || 0;
         });
 
         currentQuestion.answered = true;
         io.emit("polling-results", currentQuestion.results);
       }
-    }, questionData.timer * 1000); // Convert seconds to milliseconds
+    }, questionData.timer * 1000);
   });
 
   socket.on("handle-polling", ({ option }) => {
     if (currentQuestion && currentQuestion.options?.includes(option)) {
-      if (currentQuestion.optionsFrequency[option]) {
-        currentQuestion.optionsFrequency[option] += 1;
-      } else {
-        currentQuestion.optionsFrequency[option] = 1;
-      }
+      currentQuestion.optionsFrequency[option] =
+        (currentQuestion.optionsFrequency[option] || 0) + 1;
 
       const totalResponses = Object.values(
         currentQuestion.optionsFrequency
-      ).reduce((acc, ans) => acc + ans);
+      ).reduce((acc, ans) => acc + ans, 0);
 
-      Object.keys(currentQuestion.optionsFrequency).forEach((option) => {
+      Object.keys(currentQuestion.optionsFrequency).forEach((opt) => {
         const percentage =
-          (currentQuestion.optionsFrequency[option] / totalResponses) * 100;
-        currentQuestion.results[option] = percentage;
+          (currentQuestion.optionsFrequency[opt] / totalResponses) * 100;
+        currentQuestion.results[opt] = percentage || 0;
       });
 
       currentQuestion.answered = true;
@@ -100,7 +108,6 @@ io.on("connection", (socket) => {
       }
 
       io.emit("new-question", currentQuestion);
-
       io.emit("polling-results", currentQuestion.results);
     }
   });
@@ -121,9 +128,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log("User disconnected");
 
-    connectedStudents.get(socket.id);
     connectedStudents.delete(socket.id);
-
     io.emit("student-disconnected", Array.from(connectedStudents.values()));
   });
 });
